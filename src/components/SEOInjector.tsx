@@ -1,9 +1,12 @@
 // src/components/SEOInjector.tsx
-// Fixed: Proper GTM/Analytics script injection without sanitization
+// SEO Injector - Uses context for settings (NO direct fetching)
+// NOTE: Backend SEO settings (title, description) are ONLY applied to homepage.
+// Other pages use the useSEO hook for their own titles.
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { fetchActiveSettingsByInjectionPoint, type SiteSetting } from '../lib/supabase/seo-settings';
+import { useSiteSettings, type CustomScript } from '../lib/context/SiteSettingsContext';
 
 interface SEOInjectorProps {
     pageMeta?: {
@@ -18,93 +21,64 @@ interface SEOInjectorProps {
 /**
  * SEOInjector Component
  *
- * Fetches active site settings from Supabase and injects them into the document.
+ * Reads site settings from context and injects them into the document.
+ * IMPORTANT: Does NOT fetch directly - uses SiteSettingsProvider context.
+ *
  * Supports:
  * - Meta tags in <head>
  * - Scripts (analytics, pixels, GTM)
  * - JSON-LD structured data
  * - Custom HTML (noscript tags for GTM)
- *
- * SECURITY NOTE: Scripts and custom_html are NOT sanitized.
- * Only trusted admin users can add these through the admin panel.
  */
 export default function SEOInjector({ pageMeta }: SEOInjectorProps) {
-    const [headStartSettings, setHeadStartSettings] = useState<SiteSetting[]>([]);
-    const [headEndSettings, setHeadEndSettings] = useState<SiteSetting[]>([]);
-    const [bodyStartSettings, setBodyStartSettings] = useState<SiteSetting[]>([]);
-    const [bodyEndSettings, setBodyEndSettings] = useState<SiteSetting[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [hasError, setHasError] = useState(false);
+    const { settings, isLoading } = useSiteSettings();
+    const location = useLocation();
 
-    // Track injected elements for cleanup
+    // Track injected body elements for cleanup
     const injectedElementsRef = useRef<Element[]>([]);
 
-    useEffect(() => {
-        let mounted = true;
+    // Check if we're on the homepage
+    const isHomepage = location.pathname === '/';
 
-        async function loadSettings() {
-            try {
-                const { data, error } = await fetchActiveSettingsByInjectionPoint();
-
-                if (!mounted) return;
-
-                if (error) {
-                    console.warn('Failed to load SEO settings:', error);
-                    setHasError(true);
-                    return;
-                }
-
-                setHeadStartSettings(data.head_start);
-                setHeadEndSettings(data.head_end);
-                setBodyStartSettings(data.body_start);
-                setBodyEndSettings(data.body_end);
-            } catch (error) {
-                console.warn('Error in SEOInjector:', error);
-                if (mounted) setHasError(true);
-            } finally {
-                if (mounted) setIsLoading(false);
-            }
-        }
-
-        loadSettings();
-
-        return () => {
-            mounted = false;
-        };
-    }, []);
+    // Get settings from context
+    const seoSettings = settings?.seo;
+    const scripts = settings?.scripts;
+    const generalSettings = settings?.general;
 
     /**
      * Inject body elements (scripts, noscript tags for GTM)
      */
     useEffect(() => {
-        if (isLoading || hasError) return;
+        if (isLoading || !scripts) return;
 
         const elementsToCleanup: Element[] = [];
 
         // Helper to inject content into body
-        const injectIntoBody = (setting: SiteSetting, prepend: boolean) => {
-            if (!setting.value) return;
+        const injectIntoBody = (script: CustomScript, prepend: boolean) => {
+            if (!script.value) return;
 
-            if (setting.setting_type === 'script') {
-                // Create script element
-                const script = document.createElement('script');
-                script.setAttribute('data-seo-setting', setting.key);
-                script.innerHTML = setting.value;
+            // Check if already injected
+            if (document.querySelector(`[data-seo-setting="${script.key}"]`)) {
+                return;
+            }
+
+            if (script.setting_type === 'script') {
+                const el = document.createElement('script');
+                el.setAttribute('data-seo-setting', script.key);
+                el.innerHTML = script.value;
 
                 if (prepend) {
-                    // Insert after opening body tag
-                    document.body.insertBefore(script, document.body.firstChild);
+                    document.body.insertBefore(el, document.body.firstChild);
                 } else {
-                    document.body.appendChild(script);
+                    document.body.appendChild(el);
                 }
 
-                elementsToCleanup.push(script);
-            } else if (setting.setting_type === 'custom_html') {
-                // For custom HTML (like GTM noscript), create a container and inject
+                elementsToCleanup.push(el);
+            } else if (script.setting_type === 'custom_html') {
                 const container = document.createElement('div');
-                container.setAttribute('data-seo-setting', setting.key);
-                container.style.display = 'contents'; // Invisible wrapper
-                container.innerHTML = setting.value;
+                container.setAttribute('data-seo-setting', script.key);
+                container.style.display = 'contents';
+                container.innerHTML = script.value;
 
                 if (prepend) {
                     document.body.insertBefore(container, document.body.firstChild);
@@ -116,11 +90,11 @@ export default function SEOInjector({ pageMeta }: SEOInjectorProps) {
             }
         };
 
-        // Inject body_start elements (GTM noscript goes here)
-        bodyStartSettings.forEach((setting) => injectIntoBody(setting, true));
+        // Inject body_start elements
+        scripts.body_start.forEach((script) => injectIntoBody(script, true));
 
         // Inject body_end elements
-        bodyEndSettings.forEach((setting) => injectIntoBody(setting, false));
+        scripts.body_end.forEach((script) => injectIntoBody(script, false));
 
         injectedElementsRef.current = elementsToCleanup;
 
@@ -135,53 +109,89 @@ export default function SEOInjector({ pageMeta }: SEOInjectorProps) {
             });
             injectedElementsRef.current = [];
         };
-    }, [isLoading, hasError, bodyStartSettings, bodyEndSettings]);
+    }, [isLoading, scripts]);
 
     /**
-     * Render a setting based on its type for Helmet (head injection)
+     * Inject head scripts via DOM (for meta_tag and custom_html types)
+     * Helmet doesn't support <div> elements, so we inject manually
      */
-    const renderSetting = (setting: SiteSetting): React.ReactNode => {
-        if (!setting.value) return null;
+    useEffect(() => {
+        if (isLoading || !scripts) return;
 
-        switch (setting.setting_type) {
+        const headElements: Element[] = [];
+
+        const injectIntoHead = (script: CustomScript) => {
+            if (!script.value) return;
+
+            // Check if already injected
+            if (document.querySelector(`[data-head-setting="${script.key}"]`)) {
+                return;
+            }
+
+            if (script.setting_type === 'meta_tag' || script.setting_type === 'custom_html') {
+                // Create a temporary container to parse the HTML
+                const temp = document.createElement('div');
+                temp.innerHTML = script.value;
+
+                // Move all child elements to head
+                while (temp.firstChild) {
+                    const child = temp.firstChild as Element;
+                    if (child.setAttribute) {
+                        child.setAttribute('data-head-setting', script.key);
+                    }
+                    document.head.appendChild(child);
+                    if (child.nodeType === 1) { // Element node
+                        headElements.push(child);
+                    }
+                }
+            }
+        };
+
+        // Inject head_start and head_end custom HTML/meta elements
+        scripts.head_start.forEach(injectIntoHead);
+        scripts.head_end.forEach(injectIntoHead);
+
+        // Cleanup on unmount
+        return () => {
+            headElements.forEach((el) => {
+                try {
+                    el.remove();
+                } catch {
+                    // Element may already be removed
+                }
+            });
+        };
+    }, [isLoading, scripts]);
+
+    /**
+     * Render a custom script for head injection (Helmet-compatible elements only)
+     */
+    const renderScript = (script: CustomScript): React.ReactNode => {
+        if (!script.value) return null;
+
+        switch (script.setting_type) {
+            // meta_tag and custom_html are handled via DOM injection above
             case 'meta_tag':
-                return renderMetaTag(setting.key, setting.value, setting.id);
+            case 'custom_html':
+                return null;
 
             case 'script':
-                // Scripts injected directly - NO SANITIZATION for analytics to work
                 return (
                     <script
-                        key={setting.id}
-                        dangerouslySetInnerHTML={{ __html: setting.value }}
+                        key={script.id}
+                        dangerouslySetInnerHTML={{ __html: script.value }}
                     />
                 );
 
             case 'link':
-                return <link key={setting.id} rel="stylesheet" href={setting.value} />;
+                return <link key={script.id} rel="stylesheet" href={script.value} />;
 
             case 'json_ld':
-                // JSON-LD structured data
                 return (
                     <script
-                        key={setting.id}
+                        key={script.id}
                         type="application/ld+json"
-                        dangerouslySetInnerHTML={{ __html: setting.value }}
-                    />
-                );
-
-            case 'custom_html':
-                // Custom HTML - NO SANITIZATION (admins only)
-                // Use a script to inject the HTML into head
-                return (
-                    <script
-                        key={setting.id}
-                        dangerouslySetInnerHTML={{
-                            __html: `(function(){
-                                var d=document,t=d.createElement('div');
-                                t.innerHTML=${JSON.stringify(setting.value)};
-                                while(t.firstChild)d.head.appendChild(t.firstChild);
-                            })();`
-                        }}
+                        dangerouslySetInnerHTML={{ __html: script.value }}
                     />
                 );
 
@@ -190,43 +200,25 @@ export default function SEOInjector({ pageMeta }: SEOInjectorProps) {
         }
     };
 
-    /**
-     * Render meta tags with proper attributes
-     */
-    const renderMetaTag = (key: string, value: string, id: string): React.ReactNode => {
-        // Basic sanitization for meta content (remove HTML tags)
-        const cleanValue = value.replace(/<[^>]*>/g, '').trim();
+    // Compute final SEO values
+    // IMPORTANT: Backend SEO title/description ONLY applies to homepage.
+    // Other pages use their own useSEO hook, so we skip title/description here.
+    const title = pageMeta?.title || (isHomepage ? seoSettings?.meta_title : undefined);
+    const description = pageMeta?.description || (isHomepage ? seoSettings?.meta_description : undefined);
+    const ogImage = pageMeta?.ogImage || seoSettings?.og_image_url || '';
+    const canonical = pageMeta?.canonical || (isHomepage ? seoSettings?.canonical_url : undefined);
+    const keywords = pageMeta?.keywords?.join(', ') || (isHomepage ? seoSettings?.meta_keywords : undefined);
+    const robots = seoSettings?.robots || 'index, follow';
+    const ogTitle = isHomepage ? (seoSettings?.og_title || title) : undefined;
+    const ogDescription = isHomepage ? (seoSettings?.og_description || description) : undefined;
+    const ogType = seoSettings?.og_type || 'website';
+    const twitterCard = seoSettings?.twitter_card || 'summary_large_image';
+    const twitterSite = seoSettings?.twitter_site || '';
+    const twitterCreator = seoSettings?.twitter_creator || '';
 
-        switch (key) {
-            case 'site_title':
-                return <title key={id}>{pageMeta?.title || cleanValue}</title>;
-
-            case 'site_description':
-                return (
-                    <React.Fragment key={id}>
-                        <meta name="description" content={pageMeta?.description || cleanValue} />
-                        <meta property="og:description" content={pageMeta?.description || cleanValue} />
-                    </React.Fragment>
-                );
-
-            case 'og_image':
-                return (
-                    <React.Fragment key={id}>
-                        <meta property="og:image" content={pageMeta?.ogImage || cleanValue} />
-                        <meta name="twitter:image" content={pageMeta?.ogImage || cleanValue} />
-                    </React.Fragment>
-                );
-
-            case 'robots_meta':
-                return <meta key={id} name="robots" content={cleanValue} />;
-
-            case 'canonical_base':
-                return null;
-
-            default:
-                return <meta key={id} name={key.replace(/_/g, '-')} content={cleanValue} />;
-        }
-    };
+    // General settings (favicon, site name)
+    const siteName = generalSettings?.site_name || 'Supermal Karawaci';
+    const faviconUrl = generalSettings?.favicon_url || '/vite.svg';
 
     return (
         <Helmet>
@@ -234,27 +226,62 @@ export default function SEOInjector({ pageMeta }: SEOInjectorProps) {
             <meta charSet="UTF-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-            {/* Open Graph defaults */}
-            <meta property="og:type" content="website" />
-            <meta property="og:site_name" content="Supermal Karawaci" />
-            <meta property="og:locale" content="id_ID" />
+            {/* Page title - only set on homepage, other pages use useSEO hook */}
+            {title && <title>{title}</title>}
 
-            {/* Twitter Card defaults */}
-            <meta name="twitter:card" content="summary_large_image" />
+            {/* Meta description - only set on homepage */}
+            {description && <meta name="description" content={description} />}
 
-            {/* Canonical URL */}
-            {pageMeta?.canonical && <link rel="canonical" href={pageMeta.canonical} />}
+            {/* Robots directive */}
+            <meta name="robots" content={robots} />
 
-            {/* Keywords */}
-            {pageMeta?.keywords && pageMeta.keywords.length > 0 && (
-                <meta name="keywords" content={pageMeta.keywords.join(', ')} />
+            {/* Keywords - only set on homepage */}
+            {keywords && <meta name="keywords" content={keywords} />}
+
+            {/* Canonical URL - only set on homepage */}
+            {canonical && <link rel="canonical" href={canonical} />}
+
+            {/* Favicon from General Settings - applies to all pages */}
+            <link rel="icon" type="image/x-icon" href={faviconUrl} />
+
+            {/* Open Graph tags - only set on homepage */}
+            {isHomepage && (
+                <>
+                    <meta property="og:type" content={ogType} />
+                    <meta property="og:site_name" content={siteName} />
+                    <meta property="og:locale" content="id_ID" />
+                    {ogTitle && <meta property="og:title" content={ogTitle} />}
+                    {ogDescription && <meta property="og:description" content={ogDescription} />}
+                    {canonical && <meta property="og:url" content={canonical} />}
+                    {ogImage && <meta property="og:image" content={ogImage} />}
+                </>
             )}
 
-            {/* Dynamic SEO settings from database */}
-            {!isLoading && !hasError && (
+            {/* Twitter Card tags - only set on homepage */}
+            {isHomepage && (
                 <>
-                    {headStartSettings.map(renderSetting)}
-                    {headEndSettings.map(renderSetting)}
+                    <meta name="twitter:card" content={twitterCard} />
+                    {ogTitle && <meta name="twitter:title" content={ogTitle} />}
+                    {ogDescription && <meta name="twitter:description" content={ogDescription} />}
+                    {twitterSite && <meta name="twitter:site" content={twitterSite} />}
+                    {twitterCreator && <meta name="twitter:creator" content={twitterCreator} />}
+                    {ogImage && <meta name="twitter:image" content={ogImage} />}
+                </>
+            )}
+
+            {/* Site verification tags - applies to all pages */}
+            {seoSettings?.google_site_verification && (
+                <meta name="google-site-verification" content={seoSettings.google_site_verification} />
+            )}
+            {seoSettings?.bing_site_verification && (
+                <meta name="msvalidate.01" content={seoSettings.bing_site_verification} />
+            )}
+
+            {/* Custom scripts for head - applies to all pages */}
+            {!isLoading && scripts && (
+                <>
+                    {scripts.head_start.map(renderScript)}
+                    {scripts.head_end.map(renderScript)}
                 </>
             )}
         </Helmet>

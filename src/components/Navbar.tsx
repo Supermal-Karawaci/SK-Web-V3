@@ -5,7 +5,6 @@ import { useState, useEffect } from 'react';
 import { ChevronDown, Menu, X } from 'lucide-react';
 import {
   Store,
-  MapPin,
   FileText,
   Calendar,
   Gift,
@@ -83,11 +82,6 @@ const Navbar = () => {
               icon: Store,
               href: '/directory',
             },
-            {
-              label: 'Floor Plan',
-              description: 'Interactive mall map and navigation',
-              icon: MapPin,
-            },
           ],
         },
       ],
@@ -137,8 +131,7 @@ const Navbar = () => {
       name: 'Directory',
       href: '/directory',
       submenu: [
-        { name: 'Mall Directory', href: '/directory' },
-        { name: 'Floor Plan', href: '#' }
+        { name: 'Mall Directory', href: '/directory' }
       ]
     },
     {

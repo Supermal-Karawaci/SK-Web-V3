@@ -201,7 +201,7 @@ const Footer = () => {
         {/* Bottom Section */}
         <div className="border-t border-border-primary pt-6 md:pt-8 flex flex-col md:flex-row justify-between items-center">
           <div className="flex flex-col sm:flex-row items-center space-y-2 sm:space-y-0 sm:space-x-6 mb-4 md:mb-0 text-center sm:text-left">
-            <p className="text-text-secondary text-sm">© 2025 Supermal Karawaci. All rights reserved.</p>
+            <p className="text-text-secondary text-sm">© 2026 Supermal Karawaci. All rights reserved. Developed by <a href="https://algan.id" target="_blank" rel="noopener noreferrer" className="text-accent hover:text-accent-hover transition-colors">Marcomm</a></p>
           </div>
 
           <div className="flex items-center space-x-1 mt-4 md:mt-0">

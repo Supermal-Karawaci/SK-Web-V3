@@ -2,11 +2,16 @@
 // Modified: Two-column layout, numerical pagination, proper hero integration, contrast fixes
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 import { AlertCircle, X, Laptop, Plane, Trophy, Briefcase, TrendingUp, Flame, BarChart3, Folder } from 'lucide-react';
-import { fetchPosts, fetchFeaturedPosts, type Post, type PostFetchParams } from '../lib/supabase';
+import { fetchPosts, fetchFeaturedPosts, fetchBlogCategories, type Post, type PostFetchParams, type BlogCategory } from '../lib/supabase';
 import { seededPosts, seededCategories } from '../data/seeded-posts';
+
+// Extended interface for categories with computed post count
+interface BlogCategoryWithCount extends BlogCategory {
+  post_count: number;
+}
 import HeroBlog from './ui/HeroBlog';
 import BlogSidebar from './ui/BlogSidebar';
 import BlogListHorizontal from './ui/BlogListHorizontal';
@@ -37,8 +42,10 @@ const safeCategories = seededCategories || fallbackCategories;
 interface BlogPageState {
   posts: Post[];
   featuredPosts: Post[];
+  categories: BlogCategoryWithCount[];
   isLoading: boolean;
   isFeaturedLoading: boolean;
+  isCategoriesLoading: boolean;
   error: string | null;
   usingFallback: boolean;
   currentPage: number;
@@ -53,6 +60,7 @@ const POSTS_PER_PAGE = 6;
 
 export default function BlogPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const shouldReduceMotion = useReducedMotion();
   const [dismissedBanner, setDismissedBanner] = useState(false);
 
@@ -65,11 +73,23 @@ export default function BlogPage() {
     ]
   );
 
-  const [state, setState] = useState<BlogPageState>({
+  // Parse initial tags from URL query parameters
+  const initialTags = useMemo(() => {
+    const tagParam = searchParams.get('tag');
+    if (tagParam) {
+      // Support both single tag and comma-separated tags
+      return tagParam.split(',').map(t => t.trim()).filter(Boolean);
+    }
+    return [];
+  }, []); // Only compute once on mount
+
+  const [state, setState] = useState<BlogPageState>(() => ({
     posts: [],
     featuredPosts: [],
+    categories: [],
     isLoading: true,
     isFeaturedLoading: true,
+    isCategoriesLoading: true,
     error: null,
     usingFallback: false,
     currentPage: 1,
@@ -77,8 +97,8 @@ export default function BlogPage() {
     total: 0,
     searchQuery: '',
     selectedCategory: '',
-    selectedTags: []
-  });
+    selectedTags: initialTags
+  }));
 
   // Fetch posts with pagination
   const fetchPostsData = useCallback(async (params: PostFetchParams = {}) => {
@@ -141,7 +161,7 @@ export default function BlogPage() {
   // Fetch featured posts
   const fetchFeaturedData = useCallback(async () => {
     setState(prev => ({ ...prev, isFeaturedLoading: true }));
-    
+
     try {
       const featured = await fetchFeaturedPosts(3);
       setState(prev => ({
@@ -160,10 +180,34 @@ export default function BlogPage() {
     }
   }, []);
 
+  // Fetch blog categories from database
+  const fetchCategoriesData = useCallback(async () => {
+    setState(prev => ({ ...prev, isCategoriesLoading: true }));
+
+    try {
+      const categories = await fetchBlogCategories();
+      setState(prev => ({
+        ...prev,
+        categories,
+        isCategoriesLoading: false
+      }));
+    } catch (error) {
+      console.warn('Failed to fetch categories, using fallback:', error);
+      // Use seeded categories as fallback with 0 counts
+      const fallbackCategories = safeCategories.map(cat => ({ ...cat, post_count: 0 }));
+      setState(prev => ({
+        ...prev,
+        categories: fallbackCategories,
+        isCategoriesLoading: false
+      }));
+    }
+  }, []);
+
   // Load initial data
   useEffect(() => {
     fetchPostsData();
     fetchFeaturedData();
+    fetchCategoriesData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -336,26 +380,8 @@ export default function BlogPage() {
           </h1>
 
           {/* Category Pills - Always centered and wrapped on all screen sizes */}
-          <div className="flex flex-wrap justify-center gap-2 sm:gap-3 md:gap-4 mb-2 sm:mb-4 md:mb-6">
-            {Array.isArray(safeCategories) && safeCategories.slice(0, 6).map((category) => {
-              const IconComponent = categoryIcons[category.name as keyof typeof categoryIcons];
-              return (
-                <BlogCategoryPill
-                  key={category.id}
-                  name={category.name}
-                  selected={state.selectedCategory === category.id}
-                  onClick={() => handleCategoryChange(state.selectedCategory === category.id ? '' : category.id)}
-                  variant="secondary"
-                  className="px-3 py-1.5 text-xs sm:px-4 sm:py-2 sm:text-sm font-medium whitespace-nowrap"
-                  icon={IconComponent && <IconComponent className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
-                />
-              );
-            })}
-          </div>
-
-          {/* Second row - also centered */}
           <div className="flex flex-wrap justify-center gap-2 sm:gap-3 md:gap-4">
-            {Array.isArray(safeCategories) && safeCategories.slice(6, 8).map((category) => {
+            {state.categories.map((category) => {
               const IconComponent = categoryIcons[category.name as keyof typeof categoryIcons];
               return (
                 <BlogCategoryPill
@@ -406,15 +432,29 @@ export default function BlogPage() {
           <div className="lg:col-span-1 mt-6 lg:mt-0">
             <BlogSidebar
               featuredPosts={state.featuredPosts.slice(0, 3)}
-              categories={safeCategories}
+              categories={state.categories}
               popularTags={popularTags}
-              onTagClick={(tag) => setState(prev => ({
-                ...prev,
-                selectedTags: prev.selectedTags.includes(tag)
-                  ? prev.selectedTags.filter(t => t !== tag)
-                  : [...prev.selectedTags, tag],
-                currentPage: 1
-              }))}
+              selectedTags={state.selectedTags}
+              onTagClick={(tag) => {
+                setState(prev => {
+                  const newTags = prev.selectedTags.includes(tag)
+                    ? prev.selectedTags.filter(t => t !== tag)
+                    : [...prev.selectedTags, tag];
+
+                  // Sync URL with selected tags
+                  if (newTags.length > 0) {
+                    setSearchParams({ tag: newTags.join(',') });
+                  } else {
+                    setSearchParams({});
+                  }
+
+                  return {
+                    ...prev,
+                    selectedTags: newTags,
+                    currentPage: 1
+                  };
+                });
+              }}
               onCategoryClick={handleCategoryChange}
               showAuthor={true}
             />

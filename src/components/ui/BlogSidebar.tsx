@@ -1,10 +1,9 @@
 // src/components/ui/BlogSidebar.tsx
 // Fixed: Added BlogCategoryWithCount type, removed unused imports
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
-import { Mail, User, MapPin } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { User, MapPin } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -22,6 +21,7 @@ interface BlogSidebarProps {
   featuredPosts?: Post[];
   categories?: BlogCategoryWithCount[];
   popularTags?: Array<{ name: string; count: number }>;
+  selectedTags?: string[];
   onTagClick?: (tag: string) => void;
   onCategoryClick?: (categoryId: string) => void;
   onSubscribe?: (email: string) => void;
@@ -36,16 +36,15 @@ export default function BlogSidebar({
   featuredPosts = [],
   categories = [],
   popularTags = [],
+  selectedTags = [],
   onTagClick,
   onCategoryClick,
-  onSubscribe,
   className = '',
   showAuthor = true,
   authorName = 'Supermal Karawaci',
   authorBio = 'Your premier shopping destination in Tangerang. Discover the latest trends, events, dining experiences, and lifestyle content from one of Indonesia\'s most iconic malls.',
   authorLocation = 'Tangerang, Indonesia'
 }: BlogSidebarProps) {
-  const [email, setEmail] = useState('');
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -53,14 +52,6 @@ export default function BlogSidebar({
       month: 'short',
       day: 'numeric'
     });
-  };
-
-  const handleSubscribe = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (email.trim()) {
-      onSubscribe?.(email);
-      setEmail('');
-    }
   };
 
   return (
@@ -99,41 +90,11 @@ export default function BlogSidebar({
         </Card>
       )}
 
-      {/* Newsletter Subscription */}
-      <Card className="border-0 shadow-lg rounded-3xl bg-surface">
-        <CardContent className="p-6">
-          <h3 className="text-sm font-medium text-text-muted tracking-wider uppercase mb-6">NEWSLETTER</h3>
-          
-          <p className="text-sm text-text-secondary mb-4 leading-relaxed">
-            Subscribe to get the latest posts delivered directly to your inbox.
-          </p>
-          
-          <form onSubmit={handleSubscribe} className="space-y-3">
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Enter your email"
-              className="w-full px-4 py-3 border border-border-primary rounded-xl text-sm text-text-primary placeholder-text-muted bg-surface-secondary focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-colors"
-              required
-              aria-label="Email address for newsletter"
-            />
-            <Button 
-              type="submit"
-              className="w-full bg-accent hover:bg-accent-hover text-text-inverse border-0 rounded-xl py-3 font-medium"
-            >
-              <Mail className="w-4 h-4 mr-2" />
-              Subscribe
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      {/* Featured Posts */}
+      {/* Latest Posts */}
       {featuredPosts.length > 0 && (
         <Card className="border-0 shadow-lg rounded-3xl bg-surface">
           <CardContent className="p-6">
-            <h3 className="text-sm font-medium text-text-muted tracking-wider uppercase mb-6">FEATURED POSTS</h3>
+            <h3 className="text-sm font-medium text-text-muted tracking-wider uppercase mb-6">LATEST POSTS</h3>
             
             <div className="space-y-6">
               {featuredPosts.slice(0, 3).map((post, index) => (
@@ -201,17 +162,17 @@ export default function BlogSidebar({
         <Card className="border-0 shadow-lg rounded-3xl bg-surface">
           <CardContent className="p-6">
             <h3 className="text-sm font-medium text-text-muted tracking-wider uppercase mb-6">POPULAR TAGS</h3>
-            
+
             <div className="flex flex-wrap gap-2">
               {popularTags.map(tag => (
                 <BlogCategoryPill
                   key={tag.name}
                   name={tag.name}
                   count={tag.count}
+                  selected={selectedTags.includes(tag.name)}
                   onClick={() => onTagClick?.(tag.name)}
                   variant="outline"
                   size="sm"
-                  className="hover:bg-surface-secondary"
                 />
               ))}
             </div>

@@ -39,6 +39,10 @@ import NotFoundPage from './components/NotFoundPage'; // 404 Page
 
 // Admin Components
 import SEOInjector from './components/SEOInjector';
+import Analytics from './components/Analytics';
+
+// Site Settings Provider
+import { SiteSettingsProvider } from './lib/context/SiteSettingsContext';
 
 
 
@@ -111,9 +115,11 @@ const PublicWebsite: React.FC = () => {
 // Main App Component
 function App() {
   return (
-    <Router>
-      <SEOInjector />
-      <Routes>
+    <SiteSettingsProvider>
+      <Router>
+        <SEOInjector />
+        <Analytics />
+        <Routes>
         {/* Homepage */}
         <Route
           path="/"
@@ -216,8 +222,9 @@ function App() {
 
         {/* 404 Not Found Page */}
         <Route path="*" element={<Layout><NotFoundPage /></Layout>} />
-      </Routes>
-    </Router>
+        </Routes>
+      </Router>
+    </SiteSettingsProvider>
   );
 }
 

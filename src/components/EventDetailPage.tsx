@@ -8,8 +8,8 @@ import {
   Calendar,
   MapPin,
   Clock,
-  Share2,
   Copy,
+  Check,
   MessageCircle,
   ArrowLeft,
   ChevronLeft,
@@ -30,7 +30,7 @@ const EventDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   // SEO - dynamically updates when event loads
   useSEO(
@@ -135,7 +135,8 @@ const EventDetailPage: React.FC = () => {
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl);
-      // You could add a toast notification here
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
     } catch (err) {
       console.error('Failed to copy link:', err);
     }
@@ -173,9 +174,15 @@ const EventDetailPage: React.FC = () => {
     }
   };
 
+  // Check if content is HTML
+  const isHtmlContent = (content: string): boolean => {
+    const htmlTagPattern = /<\/?[a-z][\s\S]*>/i;
+    return htmlTagPattern.test(content);
+  };
+
   // Render markdown-like content
-  const renderEventBody = (body: string) => {
-    // Simple markdown rendering - you might want to use a proper markdown library
+  const renderMarkdownBody = (body: string) => {
+    // Simple markdown rendering
     return body.split('\n').map((line, index) => {
       if (line.startsWith('# ')) {
         return <h1 key={index} className="text-3xl font-bold mb-4 text-text-primary">{line.slice(2)}</h1>;
@@ -191,6 +198,28 @@ const EventDetailPage: React.FC = () => {
       }
       return <p key={index} className="mb-3 text-text-secondary leading-relaxed">{line}</p>;
     });
+  };
+
+  // Render event body - supports both HTML and markdown
+  const renderEventBody = (body: string) => {
+    if (isHtmlContent(body)) {
+      // Render HTML content from WYSIWYG editor
+      return (
+        <div
+          className="prose prose-invert max-w-none
+            prose-headings:text-text-primary
+            prose-p:text-text-secondary prose-p:leading-relaxed
+            prose-strong:text-text-primary prose-strong:font-semibold
+            prose-em:text-text-secondary
+            prose-ul:text-text-secondary prose-ol:text-text-secondary
+            prose-li:text-text-secondary
+            prose-a:text-accent prose-a:no-underline hover:prose-a:underline"
+          dangerouslySetInnerHTML={{ __html: body }}
+        />
+      );
+    }
+    // Render markdown-like content
+    return renderMarkdownBody(body);
   };
 
   // Loading state
@@ -239,7 +268,7 @@ const EventDetailPage: React.FC = () => {
         subtitle={formatDateRange}
         variant="compact"
         cta={
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
             <Button
               variant="outline"
               size="lg"
@@ -248,44 +277,42 @@ const EventDetailPage: React.FC = () => {
               <Calendar className="w-4 h-4 mr-2" />
               Add to Calendar
             </Button>
-            <div className="relative">
+
+            {/* Share Actions - Side by side */}
+            <div className="flex items-center gap-2">
               <Button
                 variant="outline"
                 size="lg"
-                onClick={() => setShareMenuOpen(!shareMenuOpen)}
+                onClick={handleCopyLink}
+                className="relative"
               >
-                <Share2 className="w-4 h-4 mr-2" />
-                Share Event
+                {copySuccess ? (
+                  <>
+                    <Check className="w-4 h-4 mr-2 text-success" />
+                    <span className="text-success">Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy Link
+                  </>
+                )}
               </Button>
-              
-              {/* Share Dropdown */}
-              {shareMenuOpen && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  className="absolute top-full mt-2 right-0 bg-surface-secondary border border-border-primary rounded-lg shadow-lg p-4 min-w-[200px] z-50"
+
+              <Button
+                variant="outline"
+                size="lg"
+                asChild
+              >
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(shareText + ' ' + shareUrl)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
                 >
-                  <div className="space-y-2">
-                    <button
-                      onClick={handleCopyLink}
-                      className="w-full flex items-center gap-2 p-2 hover:bg-surface-tertiary rounded text-left transition-colors"
-                    >
-                      <Copy className="w-4 h-4" />
-                      Copy Link
-                    </button>
-                    <a
-                      href={`https://wa.me/?text=${encodeURIComponent(shareText + ' ' + shareUrl)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full flex items-center gap-2 p-2 hover:bg-surface-tertiary rounded transition-colors"
-                    >
-                      <MessageCircle className="w-4 h-4" />
-                      WhatsApp
-                    </a>
-                  </div>
-                </motion.div>
-              )}
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  Share
+                </a>
+              </Button>
             </div>
           </div>
         }
@@ -442,15 +469,6 @@ const EventDetailPage: React.FC = () => {
           </div>
         </div>
       </div>
-
-
-      {/* Click outside to close share menu */}
-      {shareMenuOpen && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setShareMenuOpen(false)}
-        />
-      )}
     </div>
   );
 };

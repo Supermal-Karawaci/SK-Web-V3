@@ -744,14 +744,21 @@ export function generateEventExcerpt(body: string | null, maxChars: number = 130
     return '';
   }
 
-  // Remove markdown headers, bold, italic, and other formatting
+  // Remove HTML tags and markdown formatting
   const cleanText = body
+    .replace(/<[^>]*>/g, '') // Remove HTML tags
+    .replace(/&nbsp;/g, ' ') // Replace HTML entities
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
     .replace(/^#+\s*/gm, '') // Remove markdown headers
     .replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold
     .replace(/\*(.*?)\*/g, '$1') // Remove italic
     .replace(/\[(.*?)\]\(.*?\)/g, '$1') // Remove links, keep text
     .replace(/`(.*?)`/g, '$1') // Remove code formatting
     .replace(/\n+/g, ' ') // Replace line breaks with spaces
+    .replace(/\s+/g, ' ') // Normalize multiple spaces
     .trim();
 
   if (cleanText.length <= maxChars) {
@@ -1052,6 +1059,54 @@ export async function fetchFeaturedPosts(limit: number = 6): Promise<Post[]> {
 
   } catch (error) {
     console.warn('WARN: posts query failed or returned no rows — using seeded posts fallback. Action: run migrations/001_create_blog_tables.sql and confirm RLS policies and published rows.');
+    throw error;
+  }
+}
+
+/**
+ * Fetch blog categories from database with post counts
+ * @returns Promise resolving to array of blog categories with post counts
+ */
+export async function fetchBlogCategories(): Promise<(BlogCategory & { post_count: number })[]> {
+  try {
+    // First fetch all active categories
+    const { data: categories, error: catError } = await supabase
+      .from('blog_categories')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true });
+
+    if (catError) {
+      console.error('Error fetching blog categories:', catError);
+      throw catError;
+    }
+
+    if (!categories || categories.length === 0) {
+      return [];
+    }
+
+    // Fetch post counts for each category
+    const categoriesWithCounts = await Promise.all(
+      categories.map(async (category) => {
+        const { count, error: countError } = await supabase
+          .from('posts')
+          .select('*', { count: 'exact', head: true })
+          .eq('category_id', category.id)
+          .eq('is_published', true)
+          .or('publish_at.is.null,publish_at.lte.' + new Date().toISOString());
+
+        if (countError) {
+          console.warn(`Error fetching post count for category ${category.name}:`, countError);
+          return { ...category, post_count: 0 };
+        }
+
+        return { ...category, post_count: count || 0 };
+      })
+    );
+
+    return categoriesWithCounts;
+  } catch (error) {
+    console.error('Unexpected error fetching blog categories:', error);
     throw error;
   }
 }
